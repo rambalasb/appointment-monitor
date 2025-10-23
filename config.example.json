@@ -1,0 +1,23 @@
+{
+  "booking_url": "https://waitwhile.com/locations/costcotire-01381/time?registration=booking&OMHRMzzTYuLW47ZlM2kD=2022+Mazda+CX-5+GT&service=8Npus5b4JBG4Xsg4EWNc",
+  "check_interval_minutes": 0.5,
+  "notifications": {
+    "email": {
+      "enabled": false,
+      "smtp_server": "smtp.gmail.com",
+      "smtp_port": 587,
+      "from_email": "your-email@gmail.com",
+      "to_email": "your-email@gmail.com",
+      "password": "your-app-password"
+    },
+    "desktop": {
+      "enabled": true
+    },
+    "webhook": {
+      "enabled": false,
+      "url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+      "comment": "Can be used for Slack, Discord, or any webhook service"
+    }
+  }
+}
+

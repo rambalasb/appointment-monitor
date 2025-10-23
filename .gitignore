@@ -1,0 +1,34 @@
+# Config file with sensitive information
+config.json
+
+# State file
+state.json
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+__pycache__/
+*.pyc
+.venv/
+.env
+.DS_Store
+state.json
+config.json
