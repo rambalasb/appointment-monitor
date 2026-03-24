@@ -24,7 +24,57 @@ from webdriver_manager.firefox import GeckoDriverManager
 TIME_RE = re.compile(r"\b(1[0-2]|0?[1-9]):[0-5]\d\s*[APap][Mm]\b")
 
 
+def click_seasonal_exchange_service(driver, sleep_after: float = 0.5) -> str:
+    """
+    On the Select Services step, prefer "Seasonal Exchange 4 Wheels/8 Tires".
+    Returns 'seasonal', 'fallback', or 'none'.
+    """
+    selectors = [
+        (By.XPATH, "//button[contains(@data-cy, 'toggle-seasonal-exchange-4-wheels')]"),
+        (By.XPATH, "//button[contains(@data-cy, 'toggle') and contains(., 'Seasonal Exchange 4 Wheels')]"),
+        (
+            By.XPATH,
+            "//*[self::button or @role='button'][contains(., 'Seasonal Exchange 4 Wheels/8 Tires')]",
+        ),
+        (By.XPATH, "//button[contains(., 'Seasonal Exchange 4 Wheels/8 Tires')]"),
+    ]
+
+    def _click(el) -> None:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+        try:
+            el.click()
+        except Exception:
+            driver.execute_script("arguments[0].click();", el)
+
+    for by, sel in selectors:
+        for el in driver.find_elements(by, sel):
+            try:
+                if not el.is_displayed():
+                    continue
+                _click(el)
+                time.sleep(sleep_after)
+                return "seasonal"
+            except Exception:
+                continue
+
+    toggles = driver.find_elements(By.CSS_SELECTOR, "button[data-cy*='toggle']")
+    if not toggles:
+        return "none"
+    try:
+        _click(toggles[0])
+        time.sleep(sleep_after)
+        return "fallback"
+    except Exception:
+        return "none"
+
+
 class FastMonitor:
+    _DATEISH = re.compile(
+        r"\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b"
+        r"|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s+\d{1,2}",
+        re.I,
+    )
+
     def __init__(self, config_path: str = "config.json") -> None:
         self.config = self._load_config(config_path)
         self.locations = self.config.get("locations", [])
@@ -68,35 +118,52 @@ class FastMonitor:
 
     # ---------- Core flow ----------
 
+    def _calendar_date_buttons_visible(self) -> bool:
+        return bool(
+            self.driver.find_elements(
+                By.XPATH,
+                "//button[contains(@data-cy,'dateslot')]",
+            )
+        )
+
     def _go_to_date_page(self) -> None:
         """Attempt to reach the select date/time page by clicking common CTAs."""
         if not self.driver:
             return
-        # 0) pick a service toggle if present (some flows require it before continuing)
+        # Deep links like /time often show the calendar after the SPA paints — wait before acting.
         try:
-            toggles = self.driver.find_elements(By.CSS_SELECTOR, "button[data-cy*='toggle']")
-            if toggles:
-                try:
-                    self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", toggles[0])
-                    try:
-                        toggles[0].click()
-                    except Exception:
-                        self.driver.execute_script("arguments[0].click();", toggles[0])
-                    time.sleep(0.4)
-                except Exception:
-                    pass
+            WebDriverWait(self.driver, 20).until(
+                lambda d: self._calendar_date_buttons_visible()
+                or len(d.find_elements(By.XPATH, "//button[contains(@data-cy,'toggle')]")) > 0
+                or "Select date" in (d.page_source or "")
+                or "Select Services" in (d.page_source or "")
+            )
         except Exception:
             pass
 
-        # Try common buttons: Continue / Next / Book
+        if self._calendar_date_buttons_visible():
+            return
+
+        # Select Services: only when we're not already on the calendar
+        try:
+            click_seasonal_exchange_service(self.driver, sleep_after=0.4)
+        except Exception:
+            pass
+
+        if self._calendar_date_buttons_visible():
+            return
+
+        # Continue / Next / Book — only if calendar still not visible
         try:
             for xp in [
                 "//button[contains(., 'Continue')]",
                 "//button[contains(., 'Next')]",
                 "//button[contains(., 'Book')]",
             ]:
+                if self._calendar_date_buttons_visible():
+                    break
                 try:
-                    btn = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.XPATH, xp)))
+                    btn = WebDriverWait(self.driver, 4).until(EC.element_to_be_clickable((By.XPATH, xp)))
                     self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
                     try:
                         btn.click()
@@ -147,18 +214,36 @@ class FastMonitor:
         """Return list of clickable time strings on the page."""
         times = []
         try:
-            # Look for time buttons; handle nested spans inside buttons as well
-            buttons = self.driver.find_elements(By.XPATH,
-                "//button[.//*[contains(text(),'AM')] or contains(normalize-space(.),'AM') or contains(normalize-space(.),'PM')]")
-            for b in buttons:
-                txt = (b.text or "").strip()
-                if txt and TIME_RE.fullmatch(txt):
-                    is_disabled = b.get_attribute("disabled") or ("disabled" in (b.get_attribute("class") or "").lower())
-                    if not is_disabled and b.is_displayed():
-                        times.append(txt)
+            for b in self.driver.find_elements(By.TAG_NAME, "button"):
+                txt = " ".join((b.text or "").split())
+                if not txt or not TIME_RE.fullmatch(txt):
+                    continue
+                if b.get_attribute("disabled") is not None:
+                    continue
+                if (b.get_attribute("aria-disabled") or "").lower() == "true":
+                    continue
+                cls = (b.get_attribute("class") or "").lower()
+                if "disabled" in cls:
+                    continue
+                try:
+                    if not b.is_displayed():
+                        continue
+                except Exception:
+                    continue
+                times.append(txt)
         except Exception:
             pass
-        return sorted(list({t for t in times}))
+        return self._sort_times_unique(times)
+
+    @staticmethod
+    def _sort_times_unique(times: list) -> list:
+        def key(s: str):
+            try:
+                return datetime.strptime(s.strip(), "%I:%M %p")
+            except ValueError:
+                return datetime.min
+
+        return sorted(list(dict.fromkeys(times)), key=key)
 
     def _click_next_available(self) -> bool:
         """Click the 'Go to next available date' link if present. Return True if clicked."""
@@ -179,15 +264,28 @@ class FastMonitor:
             return False
 
     def _find_date_buttons(self) -> list:
-        """Return a list of clickable date elements on the calendar."""
-        buttons = []
+        """Return calendar day buttons — prefer Waitwhile dateslot; avoid unrelated role=radio."""
         try:
-            # Prefer explicit date slot buttons
-            buttons = self.driver.find_elements(By.XPATH,
-                "//button[contains(@data-cy,'dateslot')] | //button[@role='radio' and @aria-label] | //div[@role='gridcell']//button")
+            by_cy = self.driver.find_elements(By.XPATH, "//button[contains(@data-cy,'dateslot')]")
+            if by_cy:
+                return by_cy[:14]
+
+            grid = self.driver.find_elements(By.XPATH, "//div[@role='gridcell']//button")
+            if grid:
+                return grid[:14]
+
+            radios = self.driver.find_elements(By.XPATH, "//button[@role='radio' and @aria-label]")
+            date_like = []
+            for b in radios:
+                lab = f"{b.get_attribute('aria-label') or ''} {b.text or ''}"
+                if self._DATEISH.search(lab):
+                    date_like.append(b)
+            if date_like:
+                return date_like[:14]
+            return radios[:14]
         except Exception:
             pass
-        return buttons[:12]
+        return []
 
     def _click_date_and_wait(self, btn) -> None:
         """Click a date button and wait for times or a 'No available times' state to resolve."""
@@ -198,7 +296,7 @@ class FastMonitor:
             except Exception:
                 self.driver.execute_script("arguments[0].click();", btn)
             # Wait for either times, a next-available link, or a 'No available times' message
-            WebDriverWait(self.driver, 12).until(
+            WebDriverWait(self.driver, 18).until(
                 lambda d: bool(self._extract_times())
                 or len(d.find_elements(By.XPATH, "//*[contains(., 'No available times')]") ) > 0
                 or len(d.find_elements(By.XPATH, "//a[contains(., 'Go to next available date')] | //button[contains(., 'Go to next available date')]") ) > 0
@@ -216,6 +314,13 @@ class FastMonitor:
 
         # Try to get to date page quickly
         self._go_to_date_page()
+        try:
+            WebDriverWait(self.driver, 25).until(
+                lambda d: len(d.find_elements(By.XPATH, "//button[contains(@data-cy,'dateslot')]")) > 0
+                or len(d.find_elements(By.XPATH, "//button[@role='radio' and @aria-label]")) > 0,
+            )
+        except Exception:
+            pass
 
         # Strategy:
         # 1) Try the currently selected date, then a handful of visible dates.
