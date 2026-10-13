@@ -416,9 +416,14 @@ class FastMonitor:
 
     # ---------- Notifications ----------
 
-    def _notify(self, title: str, message: str) -> None:
-        """Send via every enabled channel in config['notifications']; failures are logged, not raised."""
+    def _notify(self, title: str, message: str) -> bool:
+        """Send via every enabled channel in config['notifications']; failures are logged, not raised.
+        Returns True only if at least one channel is enabled and none failed."""
         cfg = self.config.get("notifications", {})
+        failures = []
+        if not any(c.get("enabled") for c in cfg.values() if isinstance(c, dict)):
+            print("   ⚠️  No notification channel is enabled")
+            return False
 
         if cfg.get("desktop", {}).get("enabled"):
             try:
@@ -429,6 +434,7 @@ class FastMonitor:
                 subprocess.run(["osascript", "-e", script], check=True, capture_output=True, timeout=10)
             except Exception as e:
                 print(f"   ⚠️  Desktop notification failed: {e}")
+                failures.append("Desktop")
 
         email_cfg = cfg.get("email", {})
         if email_cfg.get("enabled"):
@@ -451,6 +457,7 @@ class FastMonitor:
                 print(f"   📧 Email sent to {email_cfg['to_email']}")
             except Exception as e:
                 print(f"   ⚠️  Email notification failed: {e}")
+                failures.append("Email")
 
         ntfy_cfg = cfg.get("ntfy", {})
         if ntfy_cfg.get("enabled") and ntfy_cfg.get("topic"):
@@ -464,6 +471,7 @@ class FastMonitor:
                 urllib.request.urlopen(req, timeout=15).close()
             except Exception as e:
                 print(f"   ⚠️  ntfy notification failed: {e}")
+                failures.append("ntfy")
 
         hook_cfg = cfg.get("webhook", {})
         if hook_cfg.get("enabled") and hook_cfg.get("url"):
@@ -477,6 +485,9 @@ class FastMonitor:
                 urllib.request.urlopen(req, timeout=15).close()
             except Exception as e:
                 print(f"   ⚠️  Webhook notification failed: {e}")
+                failures.append("Webhook")
+
+        return not failures
 
     # ---------- Runner ----------
 
@@ -584,11 +595,11 @@ class FastMonitor:
 if __name__ == "__main__":
     if "--test-alert" in sys.argv:
         # Send one alert through every enabled channel without checking any site
-        FastMonitor()._notify(
+        ok = FastMonitor()._notify(
             "Costco Tire: test alert",
             "Alerts are working. You'll get an email like this when a Seasonal Exchange slot opens.",
         )
-        sys.exit(0)
+        sys.exit(0 if ok else 1)
     # Exit non-zero only when every location failed (e.g. the site blocked us), so CI shows a red run
     sys.exit(FastMonitor().run())
 
