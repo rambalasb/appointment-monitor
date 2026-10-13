@@ -5,6 +5,11 @@ on:
     # Every 10 minutes (UTC). GitHub may start scheduled runs a few minutes late.
     - cron: "*/10 * * * *"
   workflow_dispatch: # "Run workflow" button for a manual check
+    inputs:
+      test_alert:
+        description: "Just send a test email (don't check locations)"
+        type: boolean
+        default: false
 
 concurrency:
   group: tire-monitor
@@ -40,9 +45,17 @@ jobs:
           key: tire-state-${{ github.run_id }}
           restore-keys: tire-state-
 
+      - name: Send test alert
+        if: ${{ inputs.test_alert }}
+        env:
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python -u monitor_fast.py --test-alert
+
       - name: Check locations
+        if: ${{ !inputs.test_alert }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # lets webdriver-manager fetch geckodriver without rate limits
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: python -u monitor_fast.py
 
       - name: Save seen slots

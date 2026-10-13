@@ -33,11 +33,13 @@ If one location fails to load, it is reported and the run continues with the res
 
 ## Running on GitHub Actions
 
-[.github/workflows/monitor.yml](.github/workflows/monitor.yml) runs the check every 10 minutes and sends a phone push through [ntfy](https://ntfy.sh) when **new** openings appear. Slots it has already alerted on are remembered between runs, so the same opening doesn't ping you again.
+[.github/workflows/monitor.yml](.github/workflows/monitor.yml) runs the check every 10 minutes and emails you through Gmail when **new** openings appear, with a booking link for each location. Slots it has already alerted on are remembered between runs, so the same opening doesn't email you again.
 
-- Config comes from the `CONFIG_JSON` repo secret (your `locations`, plus `"notifications": {"ntfy": {"enabled": true, "topic": "<your topic>"}}`). To update it: `gh secret set CONFIG_JSON < my-ci-config.json`.
-- On your phone: install the ntfy app and subscribe to the same topic name.
-- Run it manually: **Actions → Costco Tire monitor → Run workflow**.
+- Config comes from the `CONFIG_JSON` repo secret: your `locations`, plus `notifications.email` with `"enabled": true`, `from_email`, `to_email` and `"password_env": "GMAIL_APP_PASSWORD"`. To update it: `gh secret set CONFIG_JSON < my-ci-config.json`.
+- The Gmail [App Password](https://myaccount.google.com/apppasswords) is stored in its own secret: `gh secret set GMAIL_APP_PASSWORD` (paste it when prompted).
+- Run it manually: **Actions → Costco Tire monitor → Run workflow**. Tick **Just send a test email** to check that email works.
+- Locally, `python3 monitor_fast.py --test-alert` sends a test through every channel enabled in `config.json`.
+- Other channels (`ntfy`, `webhook`, `desktop`) are still supported in config if you want them later.
 - A run shows red only if every location fails to load (for example, if the site blocks the runner).
 - GitHub pauses scheduled workflows after 60 days with no commits to the repo. Re-enable it from the Actions tab.
 

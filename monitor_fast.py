@@ -433,14 +433,22 @@ class FastMonitor:
         email_cfg = cfg.get("email", {})
         if email_cfg.get("enabled"):
             try:
-                msg = MIMEText(message)
+                # Password from config, or from an env var (default GMAIL_APP_PASSWORD) so CI can keep it in its own secret
+                password = email_cfg.get("password") or os.environ.get(
+                    email_cfg.get("password_env", "GMAIL_APP_PASSWORD"), ""
+                )
+                if not password:
+                    raise RuntimeError("no password (set notifications.email.password or GMAIL_APP_PASSWORD)")
+                msg = MIMEText(message, "plain", "utf-8")
                 msg["Subject"] = title
                 msg["From"] = email_cfg["from_email"]
                 msg["To"] = email_cfg["to_email"]
-                with smtplib.SMTP(email_cfg["smtp_server"], int(email_cfg.get("smtp_port", 587)), timeout=20) as s:
+                server = email_cfg.get("smtp_server", "smtp.gmail.com")
+                with smtplib.SMTP(server, int(email_cfg.get("smtp_port", 587)), timeout=20) as s:
                     s.starttls()
-                    s.login(email_cfg["from_email"], email_cfg["password"])
+                    s.login(email_cfg["from_email"], password)
                     s.send_message(msg)
+                print(f"   📧 Email sent to {email_cfg['to_email']}")
             except Exception as e:
                 print(f"   ⚠️  Email notification failed: {e}")
 
@@ -530,7 +538,10 @@ class FastMonitor:
                 print(f"   🕐 Available times ({len(times)}):")
                 for t in times:
                     print(f"      • {t}")
-                found[name] = f"{name}: {date_label or 'date unknown'} — {', '.join(times)}"
+                found[name] = (
+                    f"{name}: {date_label or 'date unknown'} — {', '.join(times)}\n"
+                    f"  Book: {to_services_url(loc['url'])}"
+                )
                 slots.update(f"{name}|{date_label}|{t}" for t in times)
             elif result.get("note"):
                 print(f"   ℹ️  {result['note']}")
@@ -541,7 +552,7 @@ class FastMonitor:
         new_names = {s.split("|", 1)[0] for s in slots - seen}
         if new_names:
             lines = [found[n] for n in found if n in new_names]
-            self._notify(f"Costco Tire: new openings at {len(lines)} location(s)", "\n".join(lines))
+            self._notify(f"Costco Tire: new openings at {len(lines)} location(s)", "\n\n".join(lines))
         elif found:
             print("\n(Openings unchanged since last run — no alert sent.)")
         self._save_seen_slots(slots)
@@ -571,6 +582,13 @@ class FastMonitor:
 
 
 if __name__ == "__main__":
+    if "--test-alert" in sys.argv:
+        # Send one alert through every enabled channel without checking any site
+        FastMonitor()._notify(
+            "Costco Tire: test alert",
+            "Alerts are working. You'll get an email like this when a Seasonal Exchange slot opens.",
+        )
+        sys.exit(0)
     # Exit non-zero only when every location failed (e.g. the site blocked us), so CI shows a red run
     sys.exit(FastMonitor().run())
 
