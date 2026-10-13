@@ -1,0 +1,53 @@
+name: Costco Tire monitor
+
+on:
+  schedule:
+    # Every 10 minutes (UTC). GitHub may start scheduled runs a few minutes late.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: # "Run workflow" button for a manual check
+
+concurrency:
+  group: tire-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # config.json is gitignored; it comes from the CONFIG_JSON secret (locations + ntfy topic)
+      - name: Write config
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+        run: |
+          if [ -z "$CONFIG_JSON" ]; then echo "::error::CONFIG_JSON secret is not set"; exit 1; fi
+          printf '%s' "$CONFIG_JSON" > config.json
+
+      # Slots already alerted on, so the same opening doesn't ping every run
+      - name: Restore seen slots
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: tire-state-${{ github.run_id }}
+          restore-keys: tire-state-
+
+      - name: Check locations
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # lets webdriver-manager fetch geckodriver without rate limits
+        run: python -u monitor_fast.py
+
+      - name: Save seen slots
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: tire-state-${{ github.run_id }}
