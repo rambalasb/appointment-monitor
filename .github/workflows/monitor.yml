@@ -2,8 +2,9 @@ name: Costco Tire monitor
 
 on:
   schedule:
-    # Every 10 minutes (UTC). GitHub may start scheduled runs a few minutes late.
-    - cron: "*/10 * * * *"
+    # Every 10 minutes (UTC), offset from :00 where GitHub's scheduler is busiest and drops runs.
+    # GitHub may still start scheduled runs a few minutes late.
+    - cron: "3-59/10 * * * *"
   workflow_dispatch: # "Run workflow" button for a manual check
     inputs:
       test_alert:
